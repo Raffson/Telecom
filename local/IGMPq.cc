@@ -41,11 +41,14 @@ void IGMPq::run_timer(Timer* t){
 	data.nos = 0;
 	data.sum = click_in_cksum((unsigned char *)(&data), 12);
 
-	WritablePacket *p = Packet::make(_headroom,(const void*)(&data),sizeof(igmpv3_query),0);
+	WritablePacket *p = Packet::make(_headroom,(const void*)(&data),sizeof(igmpv3_query)+sizeof(uint32_t),0);
 	if(p == 0) {
 		click_chatter("Cannot make IGMP packet!");
 		return;
 	}
+	uint32_t op = htonl(0x94040000); //options for IPv4 header
+	memcpy(p->data()+4, p->data(), sizeof(igmpv3_query)); //shift data 4 bytes
+	memcpy(p->data(), &op, sizeof(uint32_t)); //put IPv4 options before IGMP
 	_t.schedule_after_msec(_qqic*1000);
 	output(0).push(p);
 }

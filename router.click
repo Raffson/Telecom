@@ -66,7 +66,9 @@ elementclass Router {
 		-> ip;
 
 	IGMPq(QQIC 5)
-		-> IPEncap(2, $client1_address, multicast_query, TTL 1)
+		-> IPEncap(2, $client1_address, multicast_query, TTL 1, TOS 0xc0)
+		-> StoreData(0, F) //change IP header length to 6 for options
+		-> SetIPChecksum
 		-> EtherEncap(0x0800, $client1_address, multicast_query)
 		-> [1]output;
 
