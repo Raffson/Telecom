@@ -18,6 +18,7 @@ elementclass Router {
 	// Shared IP input path and routing table
 	ip :: Strip(14)
 		-> CheckIPHeader
+		-> tigmp :: TeeIGMP
 		-> rt :: StaticIPLookup(
 					$server_address:ip/32 0,
 					$client1_address:ip/32 0,
@@ -25,7 +26,35 @@ elementclass Router {
 					$server_address:ipnet 1,
 					$client1_address:ipnet 2,
 					$client2_address:ipnet 3);
-	
+
+	//192.168.2.0/24 network
+	tigmp[1]
+		-> i1 :: IGMPq($client1_address, QQIC 5)
+		-> EtherEncap(0x0800, $client1_address, multicast_client_address)
+		-> [1]output;
+
+	i1[1] //only IGMP packets should pass here
+		-> IPEncap(2, $client1_address, multicast_query, TTL 1, TOS 0xc0)
+		-> StoreData(0, F) //change IP header length to 6 for options
+		-> SetIPChecksum
+		-> EtherEncap(0x0800, $client1_address, multicast_query)
+		-> IGMPsq //adjusts the destination address iff group specific query
+		-> [1]output;
+
+	//192.168.3.0/24 network
+	tigmp[2]
+		-> i2 :: IGMPq($client2_address, QQIC 10)
+		-> EtherEncap(0x0800, $client2_address, multicast_client_address)
+		-> [2]output;
+
+	i2[1] //only IGMP packets should pass here
+		-> IPEncap(2, $client2_address, multicast_query, TTL 1, TOS 0xc0)
+		-> StoreData(0, F) //change IP header length to 6 for options
+		-> SetIPChecksum
+		-> EtherEncap(0x0800, $client2_address, multicast_query)
+		-> IGMPsq //adjusts the destination address iff group specific query
+		-> [2]output;
+
 	// ARP responses are copied to each ARPQuerier and the host.
 	arpt :: Tee (3);
 	
@@ -64,13 +93,6 @@ elementclass Router {
 	client1_class[2]
 		-> Paint(2)
 		-> ip;
-
-	IGMPq(QQIC 5)
-		-> IPEncap(2, $client1_address, multicast_query, TTL 1, TOS 0xc0)
-		-> StoreData(0, F) //change IP header length to 6 for options
-		-> SetIPChecksum
-		-> EtherEncap(0x0800, $client1_address, multicast_query)
-		-> [1]output;
 
 	// Input and output paths for interface 2
 	input[2]
