@@ -52,5 +52,6 @@ struct igmpv3_grecord {
 };
 
 //what about auxiliary data & sources?
+//IGMPv3 does not define aux data, therefore always abscent!!!
 
 #endif

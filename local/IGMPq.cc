@@ -40,16 +40,19 @@ void IGMPq::push(int, Packet* p)
 				//mode is change to exclude which corresponds with join if number of sources is 0
 				//we must still mind that it could be change to include mode with sources...
 				//for now, we keep it simple...
-				_gtf.push_back(IPAddress(ntohl((*(uint32_t*)(p->data()+36)))));
+				_gtf.push_back(IPAddress((*(uint32_t*)(p->data()+36))));
 			}
 			else if( (*(p->data()+32)) == 0x03 ) {
 			//change to include, without sources this represents a leave
 				//same story here as in the if-part...
 				//now we need to generate a group specific query
 				//if no response is sent, we stop forwarding
-				IPAddress del(ntohl((*(uint32_t*)(p->data()+36))));
+				IPAddress del((*(uint32_t*)(p->data()+36)));
 				for( unsigned int i=0; i < _gtf.size(); i++ ) {
-					if( _gtf[i] == del ) _gtf.erase(_gtf.begin()+i);
+					if( _gtf[i] == del ) {
+						_gtf.erase(_gtf.begin()+i);
+						break;
+					}
 				}
 				//generate IP header for group specific query and group specific query itself...
 				Packet* q = generateGroupSpecificQuery(del);
@@ -107,7 +110,7 @@ Packet* IGMPq::generateGroupSpecificQuery(const IPAddress& ip)
 	data.type = IGMP_QUERY;
 	data.mrc = 50;
 	data.sum = 0;
-	data.mcaddr = htonl(ip.addr());
+	data.mcaddr = ip.addr();
 	data.resv = 0;
 	data.s = 1;
 	data.qrv = IGMP_DEFQRV;

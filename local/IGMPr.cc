@@ -42,6 +42,7 @@ void IGMPr::push(int, Packet* p)
 				memcpy(wp->data(), &op, sizeof(uint32_t)); //IPv4 options before IGMP
 				memcpy(wp->data()+4, &data, rsize); //report
 				//still need to account for aux data & number of sources
+				//IGMPv3 does not define aux data, therefore always abscent!!!
 				for( unsigned int i=0; i < mcg.size(); i++ ) {
 					igmpv3_grecord gr;
 					gr.rtype = IGMP_MODE_IS_EXCLUDE; //should need to look this up
@@ -73,6 +74,7 @@ void IGMPr::push(int, Packet* p)
 				memcpy(wp->data(), &op, sizeof(uint32_t)); //IPv4 options before IGMP
 				memcpy(wp->data()+4, &data, rsize); //report
 				//still need to account for aux data & number of sources
+				//IGMPv3 does not define aux data, therefore always abscent!!!
 				igmpv3_grecord gr;
 				gr.rtype = IGMP_MODE_IS_EXCLUDE; //should need to look this up
 				gr.adl = 0;
@@ -135,12 +137,14 @@ int IGMPr::join(const String &conf, Element *e, void * thunk, ErrorHandler * err
 		gr.mcaddr = ip.addr();
 		WritablePacket *p = Packet::make(34,0,(ntohs(data.nogr)*grsize)+rsize+sizeof(uint32_t),0);
 	//still need to account for the number of sources and aux data (for each group record)
+	//IGMPv3 does not define aux data, therefore always abscent!!!
 		if(p == 0) return -1;
 		uint32_t op = htonl(0x94040000);
 		memcpy(p->data(), &op, sizeof(uint32_t)); //IPv4 options before IGMP
 		memcpy(p->data()+4, &data, rsize); //report
 		memcpy(p->data()+4+rsize, &gr, grsize); //group record
 	//still need to account for the number of sources and aux data (for each group record)
+	//IGMPv3 does not define aux data, therefore always abscent!!!
 		uint16_t sum = click_in_cksum(p->data()+4, rsize+grsize);
 		memcpy(p->data()+6, &sum, 2);
 		me->output(1).push(p);
@@ -178,12 +182,14 @@ int IGMPr::leave(const String &conf, Element *e, void * thunk, ErrorHandler * er
 		gr.mcaddr = ip.addr();
 		WritablePacket *p = Packet::make(34,0,(ntohs(data.nogr)*grsize)+rsize+sizeof(uint32_t),0);
 	//still need to account for the number of sources and aux data (for each group record)
+	//IGMPv3 does not define aux data, therefore always abscent!!!
 		if(p == 0) return -1;
 		uint32_t op = htonl(0x94040000);
 		memcpy(p->data(), &op, sizeof(uint32_t)); //IPv4 options before IGMP
 		memcpy(p->data()+4, &data, rsize); //report
 		memcpy(p->data()+4+rsize, &gr, grsize); //group record
 	//still need to account for the number of sources and aux data (for each group record)
+	//IGMPv3 does not define aux data, therefore always abscent!!!
 		uint16_t sum = click_in_cksum(p->data()+4, rsize+grsize);
 		memcpy(p->data()+6, &sum, 2);
 		me->output(1).push(p);
