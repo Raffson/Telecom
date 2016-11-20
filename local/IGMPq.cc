@@ -5,7 +5,7 @@
 
 
 CLICK_DECLS
-IGMPq::IGMPq() : _t(this), _qqic(125), _mask(ntohl(0xFFFFFF00)), _startup(2)
+IGMPq::IGMPq() : _t(this), _qqic(125), _qrv(IGMP_DEFQRV), _startup(IGMP_DEFQRV), _mask(ntohl(0xFFFFFF00))
 {}
 
 IGMPq::~ IGMPq()
@@ -14,11 +14,23 @@ IGMPq::~ IGMPq()
 
 int IGMPq::configure(Vector<String> &conf, ErrorHandler *errh) {
 	_t.initialize(this);
-	//_qqic = 125;
-	//_t.schedule_after_msec(_qqic*1000);
-	if (cp_va_kparse(conf, this, errh, "IP", cpkP+cpkM, cpIPAddress, &_addr, "QQIC", cpkP, cpUnsigned, &_qqic, "MASK", cpkP, cpIPAddress, &_mask, cpEnd) < 0) return -1;
-	_t.schedule_after_msec(_qqic*250); //startup query interval, 1/4 of the QQIC as stated in 8.6
-	//perhaps we need QRV as parameter which will change _startup as stated in 8.7 RFC3376
+
+	if (cp_va_kparse(conf, this, errh, "IP", cpkP+cpkM, cpIPAddress, &_addr, "QQIC", cpkP, cpByte, &_qqic, "QRV", cpkP, cpByte, &_qrv, "MASK", cpkP, cpIPAddress, &_mask, cpEnd) < 0) return -1;
+	unsigned int qqi = _qqic;
+	if( qqi >= 128 ) {
+		uint8_t mant = 255 & 0x0F;
+		uint8_t exp = (255 & 0x70) >> 4;
+		qqi = (mant | 0x10) << (exp+3);
+	}
+	if( _qrv > 7 ) {
+		_qrv = 0;
+		_startup = 0;
+		_t.schedule_after_msec(qqi*1000); //no startup because qrv = 0
+	}
+	else {
+		_t.schedule_after_msec(qqi*250); //startup query interval, 1/4 of the QQIC as stated in 8.6
+		_startup = _qrv;
+	}
 	return 0;
 }
 
@@ -82,7 +94,7 @@ void IGMPq::run_timer(Timer* t){
 	data.mcaddr = 0;
 	data.resv = 0;
 	data.s = 0;
-	data.qrv = IGMP_DEFQRV;
+	data.qrv = _qrv;
 	data.qqic = _qqic;
 	data.nos = 0;
 	data.sum = click_in_cksum((unsigned char *)(&data), 12);
@@ -96,11 +108,19 @@ void IGMPq::run_timer(Timer* t){
 	memcpy(p->data(), &op, sizeof(uint32_t)); //put IPv4 options before IGMP
 	memcpy(p->data()+4, &data, sizeof(igmpv3_query)); //IGMP data
 	p->set_packet_type_anno(Packet::MULTICAST);
+
+	//still need to account for qqic > 128, do the math to get QQI
+	unsigned int qqi = _qqic;
+	if( qqi >= 128 ) {
+		uint8_t mant = 255 & 0x0F;
+		uint8_t exp = (255 & 0x70) >> 4;
+		qqi = (mant | 0x10) << (exp+3);
+	} 
 	if( _startup > 1 ) { //as stated in 8.7 RFC3376
-		_t.schedule_after_msec(_qqic*250);
+		_t.schedule_after_msec(qqi*250);
 		_startup--;
 	}
-	else _t.schedule_after_msec(_qqic*1000);
+	else _t.schedule_after_msec(qqi*1000);
 	output(1).push(p);
 }
 
@@ -113,7 +133,7 @@ Packet* IGMPq::generateGroupSpecificQuery(const IPAddress& ip)
 	data.mcaddr = ip.addr();
 	data.resv = 0;
 	data.s = 1;
-	data.qrv = IGMP_DEFQRV;
+	data.qrv = _qrv;
 	data.qqic = _qqic;
 	data.nos = 0;
 	data.sum = click_in_cksum((unsigned char *)(&data), 12);
@@ -129,6 +149,47 @@ Packet* IGMPq::generateGroupSpecificQuery(const IPAddress& ip)
 	p->set_packet_type_anno(Packet::MULTICAST);
 	return p;
 }
+
+//If no parameter is specified, we use the default value of 125
+int IGMPq::setqqic(const String &conf, Element *e, void * thunk, ErrorHandler * errh)
+{	IGMPq * me = (IGMPq *) e;
+	uint32_t qqic = 125;
+	if(cp_va_kparse(conf, me, errh, "QQIC", cpkP, cpUnsigned, &qqic, cpEnd) < 0) return -1;
+	if( qqic > 255 ) me->_qqic = 255; //QQIC is 1 byte (unsigned), so top off at 255
+	else me->_qqic = qqic;
+	//should check mrc if we will use it, otherwise set mrc equal to qqic because RFC states QQIC >= MRC
+	return 0;
+}
+
+//If no parameter is specified, we use the default value of 2
+int IGMPq::setqrv(const String &conf, Element *e, void * thunk, ErrorHandler * errh)
+{	IGMPq * me = (IGMPq *) e;
+	uint32_t qrv = IGMP_DEFQRV;
+	if(cp_va_kparse(conf, me, errh, "QRV", cpkP, cpUnsigned, &qrv, cpEnd) < 0) return -1;
+	if( qrv > 7 ) me->_qrv = 0;
+	else me->_qrv = qrv;
+	return 0;
+}
+
+String IGMPq::getqqic(Element *e, void * thunk)
+{
+	IGMPq *me = (IGMPq *) e;
+	String qqic((int)(me->_qqic));
+	qqic += "\n";
+	return qqic;
+}
+
+String IGMPq::getqrv(Element *e, void * thunk)
+{
+	IGMPq *me = (IGMPq *) e;
+	String qrv((int)(me->_qrv));
+	qrv += "\n";
+	return qrv;
+}
+
+void IGMPq::add_handlers()
+{
+	add_write_handler("qqic", &setqqic, (void *)0);	add_write_handler("qrv", &setqrv, (void *)0);	add_read_handler("qqic", &getqqic, (void *)0);	add_read_handler("qrv", &getqrv, (void *)0);}
 
 CLICK_ENDDECLS
 EXPORT_ELEMENT(IGMPq)

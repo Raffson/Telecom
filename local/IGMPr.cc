@@ -157,7 +157,7 @@ int IGMPr::leave(const String &conf, Element *e, void * thunk, ErrorHandler * er
 {	IGMPr * me = (IGMPr *) e;
 	IPAddress ip;
 	if(cp_va_kparse(conf, me, errh, "GROUP", cpkP+cpkM, cpIPAddress, &ip, cpEnd) < 0) return -1;
-	//perhaps schedule the join report later so multiple group-leaves can be sent in one packet???
+	//perhaps schedule the leave report later so multiple group-leaves can be sent in one packet???
 	if( ip.is_multicast() ){
 		bool missing = true;
 		for( unsigned int i=0; i < me->mcg.size(); i++ ) {
@@ -198,9 +198,23 @@ int IGMPr::leave(const String &conf, Element *e, void * thunk, ErrorHandler * er
 	else return -1;
 }
 
+String IGMPr::getgroups(Element *e, void * thunk)
+{
+	IGMPr * me = (IGMPr *) e;
+	String groups;
+	if( me->mcg.size() > 0 ) {
+		for( unsigned int i=0; i < me->mcg.size(); i++ ) {
+			groups += (me->mcg[i].unparse() + "\n");
+		}
+	}
+	else groups = "Not listening to any groups.\n";
+	return groups;
+}
+
 void IGMPr::add_handlers()
 {
-	add_write_handler("join", &join, (void *)0);	add_write_handler("leave", &leave, (void *)0);}
+	add_write_handler("join", &join, (void *)0);	add_write_handler("leave", &leave, (void *)0);
+	add_read_handler("getgroups", &getgroups, (void *)0);}
 
 CLICK_ENDDECLS
 EXPORT_ELEMENT(IGMPr)

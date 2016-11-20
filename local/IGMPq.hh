@@ -21,13 +21,21 @@ class IGMPq : public Element {
 		void run_timer(Timer*);
 		void push(int, Packet*);
 		//Packet* pull(int);
+
+		static int setqqic(const String &conf, Element *e, void * thunk, ErrorHandler * errh);
+		static int setqrv(const String &conf, Element *e, void * thunk, ErrorHandler * errh);
+		static String getqqic(Element *e, void * thunk);
+		static String getqrv(Element *e, void * thunk);
+		void add_handlers();
 	private:
 		Timer _t;
 		uint8_t _qqic; //qqic
+		uint8_t _qrv; //robustness variable
+		uint8_t _startup; //for startup query count, 8.7 RFC3376
+		//uint8_t _mrc; //max response code (leaving this for now since it involves timers)
 		IPAddress _addr; //will use this to determine which interface we're on
 		IPAddress _mask; //default 255.255.255.0
 		Vector<IPAddress> _gtf; //vector of 'groups to forward'
-		unsigned int _startup; //for startup query count, 8.7 RFC3376
 
 		Packet* generateGroupSpecificQuery(const IPAddress& ip);
 };
