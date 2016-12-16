@@ -36,47 +36,151 @@ int IGMPq::configure(Vector<String> &conf, ErrorHandler *errh) {
 
 void IGMPq::push(int, Packet* p)
 {
-	//respond to leave reports with a group specific query
+	//respond to leave reports with a group specific query -> done
 	//also determine if the report came from the same interface -> done
 	//receiving the multicast source (UDP) packets here too
 	//must determine whether or not we must forward the multicast source
 	//upon receiving join reports, we must start forwarding -> done
 	//we should be dealing only with IGMP or multicast IP packets
 	if( p->packet_type_anno() == 2 and p->ip_header() and p->ip_header()->ip_p == IP_PROTO_IGMP ) {
-		//IGMP join or leave?
+		//IGMP join or leave
 		uint32_t subnet = _addr.addr() & _mask.addr();
 		if( (p->ip_header()->ip_src.s_addr & _mask.addr()) == subnet ) {
-			//meaning we're on the same interface?
-			if( (*(p->data()+32)) == 0x04 ) {
+			//meaning we're on the same interface
+			IPAddress mcast((*(uint32_t*)(p->data()+36)));
+			if( (*(p->data()+32)) == 0x04 or (*(p->data()+32)) == 0x02 ) {
 			//change to exclude, without sources this represents a join
-				//mode is change to exclude which corresponds with join if number of sources is 0
-				//we must still mind that it could be change to include mode with sources...
-				//for now, we keep it simple...
-				_gtf.push_back(IPAddress((*(uint32_t*)(p->data()+36))));
-			}
-			else if( (*(p->data()+32)) == 0x03 ) {
-			//change to include, without sources this represents a leave
-				//same story here as in the if-part...
-				//now we need to generate a group specific query
-				//if no response is sent, we stop forwarding
-				IPAddress del((*(uint32_t*)(p->data()+36)));
-				for( unsigned int i=0; i < _gtf.size(); i++ ) {
-					if( _gtf[i] == del ) {
-						_gtf.erase(_gtf.begin()+i);
-						break;
+				GrpRec *gr = _gtf.findp(mcast);
+				if( gr ) { //group is present...
+				//still need to update timers...
+					Vector<SrcRecRouter> repsrc;
+					uint16_t nos = (*(uint16_t*)(p->data()+34));
+					for( unsigned int i=0; i < nos; i++ ) {
+						SrcRecRouter srec;
+						srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4)));
+						//still need the source timer...
+						repsrc.push_back(srec);
 					}
+					if( gr->inc ) { //changing from include to exclude
+						gr->inc = false; //because at least 1 host is in exclude mode
+						Vector<SrcRecRouter> diff;
+						for( unsigned int i=0; i < repsrc.size(); i++ ) {
+							bool found = false;
+							for( unsigned int j=0; j < gr->srcrecs.size(); j++ ) {
+								if( gr->srcrecs[j].src == repsrc[i].src ) {
+									found = true;
+									break;
+								}
+							}
+							if( !found ) diff.push_back(repsrc[i]);
+						}
+						gr->srcrecs = diff;
+					} else { //mode is allready exclude so compare sources
+						Vector<SrcRecRouter> isect;
+						for( unsigned int i=0; i < gr->srcrecs.size(); i++ ) {
+							for( unsigned int j=0; j < repsrc.size(); j++ ) {
+								if( gr->srcrecs[i].src == repsrc[j].src ) {
+									isect.push_back(repsrc[j]);
+									break;
+								}
+							}
+						}
+						gr->srcrecs = isect;
+					}
+				} else {
+					GrpRec rec;
+					rec.inc = false;
+					uint16_t nos = (*(uint16_t*)(p->data()+34));
+					for( unsigned int i=0; i < nos; i++ ) {
+						SrcRecRouter srec;
+						srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4)));
+						//still need the source timer...
+						rec.srcrecs.push_back(srec);
+					}
+					//still need the group timer
+					_gtf.insert(mcast, rec);
+				}
+			}
+			else if( (*(p->data()+32)) == 0x03 or (*(p->data()+32)) == 0x01 ) {
+			//change to include, without sources this represents a leave
+				Vector<SrcRecRouter> repsrc;
+				uint16_t nos = (*(uint16_t*)(p->data()+34));
+				for( unsigned int i=0; i < nos; i++ ) {
+					SrcRecRouter srec;
+					srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4)));
+					//still need the source timer...
+					repsrc.push_back(srec);
+				}
+				GrpRec *gr = _gtf.findp(mcast);
+				if( gr and nos > 0 ) { //group record should allways be present...
+				//still need to update timers...
+					if( gr->inc ) {
+						for( unsigned int i=0; i < repsrc.size(); i++ ) {
+							bool found = false;
+							for( unsigned int j=0; j < gr->srcrecs.size(); j++ ) {
+								if( gr->srcrecs[j].src == repsrc[i].src ) {
+									found = true;
+									break;
+								}
+							}
+							if( !found ) gr->srcrecs.push_back(repsrc[i]);
+						}
+					} else {
+					//if group timer expires while in exclude mode, transition to include mode
+						for( unsigned int i=0; i < repsrc.size(); i++ ) {
+							for( unsigned int j=0; j < gr->srcrecs.size(); j++ ) {
+								if( gr->srcrecs[j].src == repsrc[i].src ) {
+									gr->srcrecs.erase(gr->srcrecs.begin()+j);
+									break;
+								}
+							}
+						}
+					}
+				} else if( !gr and nos > 0 ) {
+					GrpRec rec;
+					rec.inc = true;
+					uint16_t nos = (*(uint16_t*)(p->data()+34));
+					for( unsigned int i=0; i < nos; i++ ) {
+						SrcRecRouter srec;
+						srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4)));
+						//still need the source timer...
+						rec.srcrecs.push_back(srec);
+					}
+					//still need the group timer
+					_gtf.insert(mcast, rec);
 				}
 				//generate IP header for group specific query and group specific query itself...
-				Packet* q = generateGroupSpecificQuery(del);
-				output(1).push(q);
+				if( nos == 0 ) { //only need a group specific query if it is a leave report
+					_gtf.erase(mcast); //temporarily to stop forwarding, need expiration timers
+					Packet* q = generateGroupSpecificQuery(mcast);
+					output(1).push(q);
+					//still need to run a timer to expire the group record if we get no answer
+				}
 			}
+			/*else if( (*(p->data()+32)) == 0x02 ) {
+			//mode is exclude
+				//let's do this for real...
+			}
+			else if( (*(p->data()+32)) == 0x01 ) {
+			//mode is include
+				//let's do this for real...
+			}*/
 		}
 	}
 	else if( p->ip_header() and p->dst_ip_anno().is_multicast() ) {
-		//multicast source?
-		//currently we compare to a simple vector & check if the multicast address is present
-		for( unsigned int i=0; i < _gtf.size(); i++ ) {
-			if( _gtf[i] == p->dst_ip_anno() ) {
+		//multicast source
+		IPAddress src(p->ip_header()->ip_src);
+		IPAddress mcast(p->ip_header()->ip_dst);
+		GrpRec *gr = _gtf.findp(mcast);
+		if( gr ) { //group is present...
+			bool found = false;
+			for( unsigned int i=0; i < gr->srcrecs.size(); i++ ) {
+				if( src == gr->srcrecs[i].src ) {
+					found = true;
+					break;
+				}
+			}
+			if( (gr->inc and found) or (!gr->inc and !found) ) {
 				output(0).push(p);
 				return;
 			}

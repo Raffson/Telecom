@@ -2,10 +2,15 @@
 #define CLICK_IGMPR_HH
 #include <click/element.hh>
 #include <clicknet/ip.h>
+#include <click/hashmap.hh>
 #include "igmpv3.hh"
 
 CLICK_DECLS
 
+struct SrcRec {
+	bool inc; //true if mode is include
+	Vector<IPAddress> srcs; //list of sources that are either included or excluded
+};
 
 class IGMPr : public Element { 
 	public:
@@ -18,15 +23,16 @@ class IGMPr : public Element {
 		int configure(Vector<String>&, ErrorHandler*);
 
 		void push(int, Packet*);
-		//Packet* pull(int);
 
 		static int join(const String &conf, Element *e, void * thunk, ErrorHandler * errh);
 		static int leave(const String &conf, Element *e, void * thunk, ErrorHandler * errh);
+		static int sources(const String &conf, Element *e, void * thunk, ErrorHandler * errh);
+		static int changemode(const String &conf, Element *e, void * thunk, ErrorHandler * errh);
 		static String getgroups(Element *e, void * thunk);
 		void add_handlers();
 	private:
-		//uint32_t _headroom;
-		Vector<IPAddress> mcg; //multicast groups
+		//Vector<IPAddress> mcg; //multicast groups
+		HashMap<IPAddress, SrcRec> mcg; //multicast groups
 		
 };
 

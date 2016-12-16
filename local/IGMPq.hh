@@ -4,8 +4,21 @@
 #include <clicknet/ip.h>
 #include "igmpv3.hh"
 #include <click/timer.hh>
+#include <click/hashmap.hh>
+
 
 CLICK_DECLS
+
+struct SrcRecRouter {
+	IPAddress src; //source address
+	//Timer st; //source timer
+};
+
+struct GrpRec {
+	//Timer gt; //group timer
+	bool inc; //filter mode, true if mode is include, false if mode is exclude
+	Vector<SrcRecRouter> srcrecs; //source records
+};
 
 
 class IGMPq : public Element { 
@@ -35,7 +48,7 @@ class IGMPq : public Element {
 		//uint8_t _mrc; //max response code (leaving this for now since it involves timers)
 		IPAddress _addr; //will use this to determine which interface we're on
 		IPAddress _mask; //default 255.255.255.0
-		Vector<IPAddress> _gtf; //vector of 'groups to forward'
+		HashMap<IPAddress, GrpRec> _gtf; //vector of 'groups to forward'
 
 		Packet* generateGroupSpecificQuery(const IPAddress& ip);
 };
