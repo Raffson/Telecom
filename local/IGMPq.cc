@@ -42,8 +42,12 @@ static unsigned int grouptimercount = 0;
 
 void IGMPq::setGroupTimer(GrpRec &rec, const IPAddress &mcast)
 {
-	gTimerData* timerdata = new gTimerData();	timerdata->me = this;
-	timerdata->group = mcast;	rec.gt = new Timer(&IGMPq::gHandleExpiry,timerdata);	rec.gt->initialize(this);
+	//WTF?
+	gTimerData* timerdata = new gTimerData();
+	timerdata->me = this;
+	timerdata->group = mcast;
+	rec.gt = new Timer(&IGMPq::gHandleExpiry,timerdata);
+	rec.gt->initialize(this);
 	rec.gt->schedule_after_msec(_qrv*getQQI(_qqic)*1000+5000);
 	click_chatter("Timer created for group %s, total=%d", mcast.unparse().c_str(), ++grouptimercount);
 }
@@ -52,9 +56,12 @@ static unsigned int sourcetimercount = 0;
 
 void IGMPq::setSourceTimer(SrcRecRouter &rec, const IPAddress &mcast)
 {
-	sTimerData* timerdata = new sTimerData();	timerdata->me = this;
+	sTimerData* timerdata = new sTimerData();
+	timerdata->me = this;
 	timerdata->group = mcast;
-	timerdata->src = rec.src;	rec.st = new Timer(&IGMPq::sHandleExpiry,timerdata);	rec.st->initialize(this);
+	timerdata->src = rec.src;
+	rec.st = new Timer(&IGMPq::sHandleExpiry,timerdata);
+	rec.st->initialize(this);
 	rec.st->schedule_after_msec(_qrv*getQQI(_qqic)*1000+5000);
 	click_chatter("Timer created for source %s in group %s, total=%d", rec.src.unparse().c_str(), mcast.unparse().c_str(), ++sourcetimercount);
 }
@@ -220,8 +227,12 @@ void IGMPq::push(int, Packet* p)
 				//generate IP header for group specific query and group specific query itself...
 				if( nos == 0 and (*(p->data()+32+offset)) == 0x03 ) {
 				//only need a group specific query if it is a leave report
-					GSDelayData* gsddata = new GSDelayData();					gsddata->mcast = mcast;					gsddata->me = this;					Timer* t = new Timer(&IGMPq::handleGSDelay,gsddata);
-					t->initialize(this);					t->schedule_after_msec(0);
+					GSDelayData* gsddata = new GSDelayData();
+					gsddata->mcast = mcast;
+					gsddata->me = this;
+					Timer* t = new Timer(&IGMPq::handleGSDelay,gsddata);
+					t->initialize(this);
+					t->schedule_after_msec(0);
 					//delays the group specific query just enough for the right "dumping" order
 				}
 			}
@@ -252,7 +263,8 @@ void IGMPq::push(int, Packet* p)
 	//else nothing?
 }
 
-void IGMPq::gHandleExpiry(Timer* t, void * data){	gTimerData * timerdata = (gTimerData*) data;
+void IGMPq::gHandleExpiry(Timer* t, void * data){
+	gTimerData * timerdata = (gTimerData*) data;
 	assert(timerdata); // the cast must be good
 	timerdata->me->GroupExpire(timerdata);
 	delete t;
@@ -277,7 +289,8 @@ void IGMPq::GroupExpire(gTimerData * tdata){
 	delete tdata;
 }
 
-void IGMPq::sHandleExpiry(Timer* t, void * data){	sTimerData * timerdata = (sTimerData*) data;
+void IGMPq::sHandleExpiry(Timer* t, void * data){
+	sTimerData * timerdata = (sTimerData*) data;
 	assert(timerdata); // the cast must be good
 	timerdata->me->SourceExpire(timerdata);
 	delete t;
@@ -319,9 +332,11 @@ void IGMPq::SourceExpire(sTimerData * tdata){
 
 
 void IGMPq::handleGSDelay(Timer* t, void * data){
-	GSDelayData * timerdata = (GSDelayData*) data;	assert(timerdata); // the cast must be good
+	GSDelayData * timerdata = (GSDelayData*) data;
+	assert(timerdata); // the cast must be good
 	timerdata->me->GSDelay(timerdata);
-	delete t;}
+	delete t;
+}
 
 void IGMPq::GSDelay(GSDelayData * timerdata){
 	//timerdata->me->_gtf.erase(timerdata->mcast); //temporarily to stop forwarding, need expiration timers
@@ -400,7 +415,8 @@ Packet* IGMPq::generateGroupSpecificQuery(const IPAddress& ip)
 
 //If no parameter is specified, we use the default value of 125
 int IGMPq::setqqic(const String &conf, Element *e, void * thunk, ErrorHandler * errh)
-{	IGMPq * me = (IGMPq *) e;
+{
+	IGMPq * me = (IGMPq *) e;
 	uint32_t qqic = 125;
 	if(cp_va_kparse(conf, me, errh, "QQIC", cpkP, cpUnsigned, &qqic, cpEnd) < 0) return -1;
 	if( qqic > 255 ) me->_qqic = 255; //QQIC is 1 byte (unsigned), so top off at 255
@@ -411,7 +427,8 @@ int IGMPq::setqqic(const String &conf, Element *e, void * thunk, ErrorHandler * 
 
 //If no parameter is specified, we use the default value of 2
 int IGMPq::setqrv(const String &conf, Element *e, void * thunk, ErrorHandler * errh)
-{	IGMPq * me = (IGMPq *) e;
+{
+	IGMPq * me = (IGMPq *) e;
 	uint32_t qrv = IGMP_DEFQRV;
 	if(cp_va_kparse(conf, me, errh, "QRV", cpkP, cpUnsigned, &qrv, cpEnd) < 0) return -1;
 	if( qrv > 7 ) me->_qrv = 0;
@@ -437,7 +454,11 @@ String IGMPq::getqrv(Element *e, void * thunk)
 
 void IGMPq::add_handlers()
 {
-	add_write_handler("qqic", &setqqic, (void *)0);	add_write_handler("qrv", &setqrv, (void *)0);	add_read_handler("qqic", &getqqic, (void *)0);	add_read_handler("qrv", &getqrv, (void *)0);}
+	add_write_handler("qqic", &setqqic, (void *)0);
+	add_write_handler("qrv", &setqrv, (void *)0);
+	add_read_handler("qqic", &getqqic, (void *)0);
+	add_read_handler("qrv", &getqrv, (void *)0);
+}
 
 CLICK_ENDDECLS
 EXPORT_ELEMENT(IGMPq)
