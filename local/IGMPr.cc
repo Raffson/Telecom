@@ -3,7 +3,7 @@
 #include <click/error.hh>
 #include "IGMPr.hh"
 
-
+//WTF
 CLICK_DECLS
 IGMPr::IGMPr()
 {}
@@ -39,7 +39,10 @@ void IGMPr::push(int, Packet* p)
 			if( (*(uint32_t*)(p->data()+28)) == 0 and mcg.size() > 0 ) {
 			//general query
 				if( !iTimer.scheduled() ) {
-					iTimerData* timerdata = new iTimerData();					timerdata->me = this;					iTimer.assign(&IGMPr::iHandleExpiry,timerdata);					iTimer.initialize(this);
+					iTimerData* timerdata = new iTimerData();
+					timerdata->me = this;
+					iTimer.assign(&IGMPr::iHandleExpiry,timerdata);
+					iTimer.initialize(this);
 					iTimer.schedule_after_msec(random*mrt*100);
 				}
 				return;
@@ -50,8 +53,12 @@ void IGMPr::push(int, Packet* p)
 				SrcRec *sr = mcg.findp(ip);
 				if( !sr ) return;
 				if( !sr->gTimer ) {
-					gTimerData* timerdata = new gTimerData();					timerdata->group = ip;					timerdata->me = this;					sr->gTimer = new Timer(&IGMPr::gHandleExpiry,timerdata);
-					sr->gTimer->initialize(this);					sr->gTimer->schedule_after_msec(random*mrt*100);
+					gTimerData* timerdata = new gTimerData();
+					timerdata->group = ip;
+					timerdata->me = this;
+					sr->gTimer = new Timer(&IGMPr::gHandleExpiry,timerdata);
+					sr->gTimer->initialize(this);
+					sr->gTimer->schedule_after_msec(random*mrt*100);
 				}
 				return;
 			}
@@ -84,7 +91,8 @@ void IGMPr::push(int, Packet* p)
 	else output(0).push(p);
 }
 
-void IGMPr::iHandleExpiry(Timer* t, void * data){	iTimerData * timerdata = (iTimerData*) data;
+void IGMPr::iHandleExpiry(Timer* t, void * data){
+	iTimerData * timerdata = (iTimerData*) data;
 	assert(timerdata); // the cast must be good
 	timerdata->me->GQueryResponse(timerdata);
 }
@@ -133,7 +141,8 @@ void IGMPr::GQueryResponse(iTimerData * tdata){
 	delete tdata;
 }
 
-void IGMPr::gHandleExpiry(Timer* t, void * data){	gTimerData * timerdata = (gTimerData*) data;
+void IGMPr::gHandleExpiry(Timer* t, void * data){
+	gTimerData * timerdata = (gTimerData*) data;
 	assert(timerdata); // the cast must be good
 	timerdata->me->SQueryResponse(timerdata);
 	SrcRec *sr = timerdata->me->mcg.findp(timerdata->group);
@@ -192,7 +201,8 @@ void RemoveDuplicates(Vector<IPAddress>& ips)
 }
 
 int IGMPr::join(const String &conf, Element *e, void * thunk, ErrorHandler * errh)
-{	IGMPr * me = (IGMPr *) e;
+{
+	IGMPr * me = (IGMPr *) e;
 	IPAddress ip;
 	bool inc = false;
 	Vector<IPAddress> srcs;
@@ -245,12 +255,14 @@ int IGMPr::join(const String &conf, Element *e, void * thunk, ErrorHandler * err
 		uint16_t sum = click_in_cksum(p->data()+4, rsize+grsize+(srcs.size()*sizeof(uint32_t)));
 		memcpy(p->data()+6, &sum, 2);
 		me->output(1).push(p);
-		return 0;	}
+		return 0;
+	}
 	else return -1;
 }
 
 int IGMPr::leave(const String &conf, Element *e, void * thunk, ErrorHandler * errh)
-{	IGMPr * me = (IGMPr *) e;
+{
+	IGMPr * me = (IGMPr *) e;
 	IPAddress ip;
 	if(cp_va_kparse(conf, me, errh, "GROUP", cpkP+cpkM, cpIPAddress, &ip, cpEnd) < 0) return -1;
 	//perhaps schedule the leave report later so multiple group-leaves can be sent in one packet???
@@ -439,9 +451,12 @@ String IGMPr::getgroups(Element *e, void * thunk)
 
 void IGMPr::add_handlers()
 {
-	add_write_handler("join", &join, (void *)0);	add_write_handler("leave", &leave, (void *)0);
-	add_write_handler("sources", &sources, (void *)0);	add_write_handler("mode", &changemode, (void *)0);
-	add_read_handler("getgroups", &getgroups, (void *)0);}
+	add_write_handler("join", &join, (void *)0);
+	add_write_handler("leave", &leave, (void *)0);
+	add_write_handler("sources", &sources, (void *)0);
+	add_write_handler("mode", &changemode, (void *)0);
+	add_read_handler("getgroups", &getgroups, (void *)0);
+}
 
 CLICK_ENDDECLS
 EXPORT_ELEMENT(IGMPr)
