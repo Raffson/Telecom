@@ -88,16 +88,20 @@ void IGMPq::push(int, Packet* p)
 		uint32_t subnet = _addr.addr() & _mask.addr();
 		if( (p->ip_header()->ip_src.s_addr & _mask.addr()) == subnet ) {
 			//meaning we're on the same interface
-			IPAddress mcast((*(uint32_t*)(p->data()+36))); // <-- we need all groups of the report!
-			if( (*(p->data()+32)) == 0x04 or (*(p->data()+32)) == 0x02 ) {
+			unsigned int offset = 0;
+			unsigned int nog = ntohs((*(uint16_t*)(p->data()+30)));
+			for( unsigned int group=0; group < nog; group++ ) {
+			
+			IPAddress mcast((*(uint32_t*)(p->data()+36+offset)));
+			uint16_t nos = ntohs((*(uint16_t*)(p->data()+34+offset)));
+			if( (*(p->data()+32+offset)) == 0x04 or (*(p->data()+32+offset)) == 0x02 ) {
 			//mode is exclude or change to exclude
 				GrpRec *gr = _gtf.findp(mcast);
 				if( gr ) { //group is present...
 					Vector<SrcRecRouter> repsrc;
-					uint16_t nos = (*(uint16_t*)(p->data()+34));
 					for( unsigned int i=0; i < nos; i++ ) {
 						SrcRecRouter srec;
-						srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4)));
+						srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4+offset)));
 						srec.st = NULL;
 						repsrc.push_back(srec);
 					}
@@ -160,10 +164,9 @@ void IGMPq::push(int, Packet* p)
 				} else {
 					GrpRec rec;
 					rec.inc = false;
-					uint16_t nos = (*(uint16_t*)(p->data()+34));
 					for( unsigned int i=0; i < nos; i++ ) {
 						SrcRecRouter srec;
-						srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4)));
+						srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4+offset)));
 						srec.st = NULL;
 						rec.srcrecs.push_back(srec);
 					}
@@ -171,13 +174,12 @@ void IGMPq::push(int, Packet* p)
 					_gtf.insert(mcast, rec);
 				}
 			}
-			else if( (*(p->data()+32)) == 0x03 or (*(p->data()+32)) == 0x01 ) {
+			else if( (*(p->data()+32+offset)) == 0x03 or (*(p->data()+32+offset)) == 0x01 ) {
 			//mode is include or change to include
 				Vector<SrcRecRouter> repsrc;
-				uint16_t nos = ntohs((*(uint16_t*)(p->data()+34)));
 				for( unsigned int i=0; i < nos; i++ ) {
 					SrcRecRouter srec;
-					srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4)));
+					srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4+offset)));
 					srec.st = NULL;
 					repsrc.push_back(srec);
 				}
@@ -208,7 +210,7 @@ void IGMPq::push(int, Packet* p)
 					rec.inc = true;
 					for( unsigned int i=0; i < nos; i++ ) {
 						SrcRecRouter srec;
-						srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4)));
+						srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4+offset)));
 						setSourceTimer(srec, mcast);
 						rec.srcrecs.push_back(srec);
 					}
@@ -216,12 +218,14 @@ void IGMPq::push(int, Packet* p)
 					_gtf.insert(mcast, rec);
 				}
 				//generate IP header for group specific query and group specific query itself...
-				if( nos == 0 and (*(p->data()+32)) == 0x03 ) {
+				if( nos == 0 and (*(p->data()+32+offset)) == 0x03 ) {
 				//only need a group specific query if it is a leave report
 					GSDelayData* gsddata = new GSDelayData();					gsddata->mcast = mcast;					gsddata->me = this;					Timer* t = new Timer(&IGMPq::handleGSDelay,gsddata);
 					t->initialize(this);					t->schedule_after_msec(0);
 					//delays the group specific query just enough for the right "dumping" order
 				}
+			}
+			offset = offset + 8 + 4*nos;
 			}
 		}
 	}
@@ -252,6 +256,7 @@ void IGMPq::gHandleExpiry(Timer* t, void * data){	gTimerData * timerdata = (gTi
 	assert(timerdata); // the cast must be good
 	timerdata->me->GroupExpire(timerdata);
 	delete t;
+	grouptimercount--;
 }
 
 void IGMPq::GroupExpire(gTimerData * tdata){
@@ -276,6 +281,7 @@ void IGMPq::sHandleExpiry(Timer* t, void * data){	sTimerData * timerdata = (sTi
 	assert(timerdata); // the cast must be good
 	timerdata->me->SourceExpire(timerdata);
 	delete t;
+	sourcetimercount--;
 }
 
 void IGMPq::SourceExpire(sTimerData * tdata){

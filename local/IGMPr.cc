@@ -111,6 +111,7 @@ void IGMPr::GQueryResponse(iTimerData * tdata){
 	memcpy(wp->data(), &op, sizeof(uint32_t)); //IPv4 options before IGMP
 	memcpy(wp->data()+4, &data, rsize); //report
 	unsigned int count=0;
+	unsigned int sc=0;
 	for( HashMap<IPAddress, SrcRec>::iterator it = tdata->me->mcg.begin(); it != tdata->me->mcg.end(); ++it ) {
 		igmpv3_grecord gr;
 		if( it.value().inc ) gr.rtype = IGMP_MODE_IS_INCLUDE;
@@ -118,12 +119,13 @@ void IGMPr::GQueryResponse(iTimerData * tdata){
 		gr.adl = 0;
 		gr.nos = htons(it.value().srcs.size());
 		gr.mcaddr = it.key().addr();
-		memcpy(wp->data()+4+rsize+(count*grsize), &gr, grsize); //group record
+		memcpy(wp->data()+4+rsize+(count*grsize)+sc*4, &gr, grsize); //group record
 		count++;
 		for(unsigned int i=0; i < it.value().srcs.size(); i++) {
 			uint32_t a = it.value().srcs[i].addr();
-			memcpy(wp->data()+4+rsize+(count*grsize)+(i*sizeof(uint32_t)),&a, sizeof(uint32_t));
+			memcpy(wp->data()+4+rsize+(count*grsize)+sc*4+(i*sizeof(uint32_t)),&a, sizeof(uint32_t));
 		}
+		sc += it.value().srcs.size();
 	}
 	uint16_t sum = click_in_cksum(wp->data()+4,rsize+(tdata->me->mcg.size()*grsize)+(sourcecount*sizeof(uint32_t)));
 	memcpy(wp->data()+6, &sum, 2);
