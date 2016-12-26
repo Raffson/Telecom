@@ -11,17 +11,21 @@ IGMPq::IGMPq() : _t(this), _qqic(125), _qrv(IGMP_DEFQRV), _startup(IGMP_DEFQRV),
 IGMPq::~ IGMPq()
 {}
 
-
-int IGMPq::configure(Vector<String> &conf, ErrorHandler *errh) {
-	_t.initialize(this);
-
-	if (cp_va_kparse(conf, this, errh, "IP", cpkP+cpkM, cpIPAddress, &_addr, "QQIC", cpkP, cpByte, &_qqic, "QRV", cpkP, cpByte, &_qrv, "MASK", cpkP, cpIPAddress, &_mask, cpEnd) < 0) return -1;
-	unsigned int qqi = _qqic;
+unsigned int getQQI(unsigned int qqi)
+{
 	if( qqi >= 128 ) {
 		uint8_t mant = 255 & 0x0F;
 		uint8_t exp = (255 & 0x70) >> 4;
 		qqi = (mant | 0x10) << (exp+3);
 	}
+	return qqi;
+}
+
+int IGMPq::configure(Vector<String> &conf, ErrorHandler *errh) {
+	_t.initialize(this);
+
+	if (cp_va_kparse(conf, this, errh, "IP", cpkP+cpkM, cpIPAddress, &_addr, "QQIC", cpkP, cpByte, &_qqic, "QRV", cpkP, cpByte, &_qrv, "MASK", cpkP, cpIPAddress, &_mask, cpEnd) < 0) return -1;
+	unsigned int qqi = getQQI(_qqic);
 	if( _qrv > 7 ) {
 		_qrv = 0;
 		_startup = 0;
@@ -32,6 +36,43 @@ int IGMPq::configure(Vector<String> &conf, ErrorHandler *errh) {
 		_startup = _qrv;
 	}
 	return 0;
+}
+
+static unsigned int grouptimercount = 0;
+
+void IGMPq::setGroupTimer(GrpRec &rec, const IPAddress &mcast)
+{
+	gTimerData* timerdata = new gTimerData();	timerdata->me = this;
+	timerdata->group = mcast;	rec.gt = new Timer(&IGMPq::gHandleExpiry,timerdata);	rec.gt->initialize(this);
+	rec.gt->schedule_after_msec(_qrv*getQQI(_qqic)*1000+5000);
+	click_chatter("Timer created for group %s, total=%d", mcast.unparse().c_str(), ++grouptimercount);
+}
+
+static unsigned int sourcetimercount = 0;
+
+void IGMPq::setSourceTimer(SrcRecRouter &rec, const IPAddress &mcast)
+{
+	sTimerData* timerdata = new sTimerData();	timerdata->me = this;
+	timerdata->group = mcast;
+	timerdata->src = rec.src;	rec.st = new Timer(&IGMPq::sHandleExpiry,timerdata);	rec.st->initialize(this);
+	rec.st->schedule_after_msec(_qrv*getQQI(_qqic)*1000+5000);
+	click_chatter("Timer created for source %s in group %s, total=%d", rec.src.unparse().c_str(), mcast.unparse().c_str(), ++sourcetimercount);
+}
+
+Vector<SrcRecRouter> DiffSet(const Vector<SrcRecRouter> &a, const Vector<SrcRecRouter> &b)
+{
+	Vector<SrcRecRouter> diff;
+	for( unsigned int i=0; i < a.size(); i++ ) {
+		bool found = false;
+		for( unsigned int j=0; j < b.size(); j++ ) {
+			if( b[j].src == a[i].src ) {
+				found = true;
+				break;
+			}
+		}
+		if( !found ) diff.push_back(a[i]);
+	}
+	return diff;
 }
 
 void IGMPq::push(int, Packet* p)
@@ -47,45 +88,74 @@ void IGMPq::push(int, Packet* p)
 		uint32_t subnet = _addr.addr() & _mask.addr();
 		if( (p->ip_header()->ip_src.s_addr & _mask.addr()) == subnet ) {
 			//meaning we're on the same interface
-			IPAddress mcast((*(uint32_t*)(p->data()+36)));
+			IPAddress mcast((*(uint32_t*)(p->data()+36))); // <-- we need all groups of the report!
 			if( (*(p->data()+32)) == 0x04 or (*(p->data()+32)) == 0x02 ) {
-			//change to exclude, without sources this represents a join
+			//mode is exclude or change to exclude
 				GrpRec *gr = _gtf.findp(mcast);
 				if( gr ) { //group is present...
-				//still need to update timers...
 					Vector<SrcRecRouter> repsrc;
 					uint16_t nos = (*(uint16_t*)(p->data()+34));
 					for( unsigned int i=0; i < nos; i++ ) {
 						SrcRecRouter srec;
 						srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4)));
-						//still need the source timer...
+						srec.st = NULL;
 						repsrc.push_back(srec);
 					}
 					if( gr->inc ) { //changing from include to exclude
 						gr->inc = false; //because at least 1 host is in exclude mode
-						Vector<SrcRecRouter> diff;
-						for( unsigned int i=0; i < repsrc.size(); i++ ) {
-							bool found = false;
-							for( unsigned int j=0; j < gr->srcrecs.size(); j++ ) {
-								if( gr->srcrecs[j].src == repsrc[i].src ) {
-									found = true;
-									break;
-								}
-							}
-							if( !found ) diff.push_back(repsrc[i]);
-						}
-						gr->srcrecs = diff;
-					} else { //mode is allready exclude so compare sources
-						Vector<SrcRecRouter> isect;
+						Vector<SrcRecRouter> diff = DiffSet(repsrc, gr->srcrecs);
+						Vector<SrcRecRouter> diff2 = DiffSet(gr->srcrecs, repsrc);
 						for( unsigned int i=0; i < gr->srcrecs.size(); i++ ) {
-							for( unsigned int j=0; j < repsrc.size(); j++ ) {
-								if( gr->srcrecs[i].src == repsrc[j].src ) {
-									isect.push_back(repsrc[j]);
+							for( unsigned int j=0; j < diff.size(); j++ ) {
+								if( gr->srcrecs[i].src == diff[j].src and
+										gr->srcrecs[i].st ) {
+									gr->srcrecs[i].st->clear();
+									delete gr->srcrecs[i].st;
+									gr->srcrecs[i].st = NULL;
+									break;
+								}
+							}
+							for( unsigned int j=0; j < diff2.size(); j++ ) {
+								if( gr->srcrecs[i].src == diff2[j].src ) {
+									if( gr->srcrecs[i].st ) {
+										gr->srcrecs[i].st->clear();
+										delete gr->srcrecs[i].st;
+									}
+									gr->srcrecs.erase(gr->srcrecs.begin()+i);
+									i--;
 									break;
 								}
 							}
 						}
-						gr->srcrecs = isect;
+						if( gr->gt ) delete gr->gt; //shouldn't be the case though...
+						setGroupTimer((*gr), mcast);
+					} else { //mode is already exclude
+						Vector<SrcRecRouter> diff = DiffSet(gr->srcrecs, repsrc);
+						Vector<SrcRecRouter> diff2 = DiffSet(repsrc, gr->srcrecs);
+						for( unsigned int i=0; i < gr->srcrecs.size(); i++ ) {
+							for( unsigned int j=0; j < diff2.size(); j++ ) {
+								if( gr->srcrecs[i].src == diff2[j].src ) {
+									if( gr->srcrecs[i].st ) {
+										gr->srcrecs[i].st->schedule_after_msec(_qrv*getQQI(_qqic)*1000+5000);
+									} else {
+										setSourceTimer(gr->srcrecs[i], mcast);
+									}
+									break;
+								}
+							}
+							for( unsigned int j=0; j < diff.size(); j++ ) {
+								if( gr->srcrecs[i].src == diff[j].src ) {
+									if( gr->srcrecs[i].st ) {
+										gr->srcrecs[i].st->clear();
+										delete gr->srcrecs[i].st;
+									}
+									gr->srcrecs.erase(gr->srcrecs.begin()+i);
+									i--;
+									break;
+								}
+							}
+						}
+						gr->gt->schedule_after_msec(_qrv*getQQI(_qqic)*1000+5000);
 					}
 				} else {
 					GrpRec rec;
@@ -94,77 +164,65 @@ void IGMPq::push(int, Packet* p)
 					for( unsigned int i=0; i < nos; i++ ) {
 						SrcRecRouter srec;
 						srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4)));
-						//still need the source timer...
+						srec.st = NULL;
 						rec.srcrecs.push_back(srec);
 					}
-					//still need the group timer
+					setGroupTimer(rec, mcast);
 					_gtf.insert(mcast, rec);
 				}
 			}
 			else if( (*(p->data()+32)) == 0x03 or (*(p->data()+32)) == 0x01 ) {
-			//change to include, without sources this represents a leave
+			//mode is include or change to include
 				Vector<SrcRecRouter> repsrc;
-				uint16_t nos = (*(uint16_t*)(p->data()+34));
+				uint16_t nos = ntohs((*(uint16_t*)(p->data()+34)));
 				for( unsigned int i=0; i < nos; i++ ) {
 					SrcRecRouter srec;
 					srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4)));
-					//still need the source timer...
+					srec.st = NULL;
 					repsrc.push_back(srec);
 				}
 				GrpRec *gr = _gtf.findp(mcast);
-				if( gr and nos > 0 ) { //group record should allways be present...
-				//still need to update timers...
-					if( gr->inc ) {
-						for( unsigned int i=0; i < repsrc.size(); i++ ) {
-							bool found = false;
-							for( unsigned int j=0; j < gr->srcrecs.size(); j++ ) {
-								if( gr->srcrecs[j].src == repsrc[i].src ) {
-									found = true;
-									break;
+				if( gr and nos > 0 ) { //group record should always be present...
+					//if( gr->inc ) {
+					//same stuff needs to be done for both include & exclude mode
+					for( unsigned int i=0; i < repsrc.size(); i++ ) {
+						bool found = false;
+						for( unsigned int j=0; j < gr->srcrecs.size(); j++ ) {
+							if( gr->srcrecs[j].src == repsrc[i].src ) {
+								found = true;
+								if( gr->srcrecs[j].st ) {
+									gr->srcrecs[j].st->schedule_after_msec(_qrv*getQQI(_qqic)*1000+5000);
+								} else {
+									setSourceTimer(gr->srcrecs[j], mcast);
 								}
+								break;
 							}
-							if( !found ) gr->srcrecs.push_back(repsrc[i]);
 						}
-					} else {
-					//if group timer expires while in exclude mode, transition to include mode
-						for( unsigned int i=0; i < repsrc.size(); i++ ) {
-							for( unsigned int j=0; j < gr->srcrecs.size(); j++ ) {
-								if( gr->srcrecs[j].src == repsrc[i].src ) {
-									gr->srcrecs.erase(gr->srcrecs.begin()+j);
-									break;
-								}
-							}
+						if( !found ) {
+							gr->srcrecs.push_back(repsrc[i]);
+							setSourceTimer(gr->srcrecs.back(), mcast);
 						}
 					}
 				} else if( !gr and nos > 0 ) {
 					GrpRec rec;
 					rec.inc = true;
-					uint16_t nos = (*(uint16_t*)(p->data()+34));
 					for( unsigned int i=0; i < nos; i++ ) {
 						SrcRecRouter srec;
 						srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4)));
-						//still need the source timer...
+						setSourceTimer(srec, mcast);
 						rec.srcrecs.push_back(srec);
 					}
-					//still need the group timer
+					rec.gt = NULL;
 					_gtf.insert(mcast, rec);
 				}
 				//generate IP header for group specific query and group specific query itself...
-				if( nos == 0 ) { //only need a group specific query if it is a leave report
-					_gtf.erase(mcast); //temporarily to stop forwarding, need expiration timers
-					Packet* q = generateGroupSpecificQuery(mcast);
-					output(1).push(q);
-					//still need to run a timer to expire the group record if we get no answer
+				if( nos == 0 and (*(p->data()+32)) == 0x03 ) {
+				//only need a group specific query if it is a leave report
+					GSDelayData* gsddata = new GSDelayData();					gsddata->mcast = mcast;					gsddata->me = this;					Timer* t = new Timer(&IGMPq::handleGSDelay,gsddata);
+					t->initialize(this);					t->schedule_after_msec(0);
+					//delays the group specific query just enough for the right "dumping" order
 				}
 			}
-			/*else if( (*(p->data()+32)) == 0x02 ) {
-			//mode is exclude
-				//let's do this for real...
-			}
-			else if( (*(p->data()+32)) == 0x01 ) {
-			//mode is include
-				//let's do this for real...
-			}*/
 		}
 	}
 	else if( p->ip_header() and p->dst_ip_anno().is_multicast() ) {
@@ -177,6 +235,7 @@ void IGMPq::push(int, Packet* p)
 			for( unsigned int i=0; i < gr->srcrecs.size(); i++ ) {
 				if( src == gr->srcrecs[i].src ) {
 					found = true;
+					if( gr->srcrecs[i].st and !gr->inc ) found = false;
 					break;
 				}
 			}
@@ -189,11 +248,90 @@ void IGMPq::push(int, Packet* p)
 	//else nothing?
 }
 
+void IGMPq::gHandleExpiry(Timer* t, void * data){	gTimerData * timerdata = (gTimerData*) data;
+	assert(timerdata); // the cast must be good
+	timerdata->me->GroupExpire(timerdata);
+	delete t;
+}
+
+void IGMPq::GroupExpire(gTimerData * tdata){
+	GrpRec *gr = tdata->me->_gtf.findp(tdata->group);
+	click_chatter("GroupExpire group: %s", tdata->group.unparse().c_str());
+	if( gr ) {
+		gr->inc = true;
+		gr->gt = NULL; //mem is freed in gHandleExpiry
+		for( unsigned int i=0; i < gr->srcrecs.size(); i++ ) {
+			if( !gr->srcrecs[i].st ) {
+				gr->srcrecs.erase(gr->srcrecs.begin()+i);
+				i--;
+			}
+		}
+		click_chatter("GroupExpire srcrecs left: %d", gr->srcrecs.size());
+		if( gr->srcrecs.size() == 0 ) tdata->me->_gtf.erase(tdata->group);
+	}
+	delete tdata;
+}
+
+void IGMPq::sHandleExpiry(Timer* t, void * data){	sTimerData * timerdata = (sTimerData*) data;
+	assert(timerdata); // the cast must be good
+	timerdata->me->SourceExpire(timerdata);
+	delete t;
+}
+
+void IGMPq::SourceExpire(sTimerData * tdata){
+	GrpRec *gr = tdata->me->_gtf.findp(tdata->group);
+	click_chatter("SourceExpire group: %s   src: %s",
+		tdata->group.unparse().c_str(), tdata->src.unparse().c_str());
+	if( gr ) {
+		if( gr->inc ) {
+			//Suggest to stop forwarding traffic from source and remove source record.
+			//If there are no more source records for the group, delete group record.
+			for( unsigned int j=0; j < gr->srcrecs.size(); j++ ) {
+				if( gr->srcrecs[j].src == tdata->src ) {
+					gr->srcrecs.erase(gr->srcrecs.begin()+j);
+					break;
+				}
+			}
+			if( gr->srcrecs.size() == 0 ) {
+				if( gr->gt ) delete gr->gt; //shouldn't be possible but just to be safe
+				tdata->me->_gtf.erase(tdata->group);
+			}
+		} else {
+			//Suggest to not forward traffic from source (DO NOT remove record)
+			//so basically nothing but just need to make sure this doesn't get forwarded?
+			//like deleting timer pointer & setting it to NULL?
+			for( unsigned int j=0; j < gr->srcrecs.size(); j++ ) {
+				if( gr->srcrecs[j].src == tdata->src ) {
+					gr->srcrecs[j].st = NULL; //mem is freed in sHandleExpiry
+					break;
+				}
+			}
+		}
+	}
+	delete tdata;
+}
+
+
+void IGMPq::handleGSDelay(Timer* t, void * data){
+	GSDelayData * timerdata = (GSDelayData*) data;	assert(timerdata); // the cast must be good
+	timerdata->me->GSDelay(timerdata);
+	delete t;}
+
+void IGMPq::GSDelay(GSDelayData * timerdata){
+	//timerdata->me->_gtf.erase(timerdata->mcast); //temporarily to stop forwarding, need expiration timers
+	GrpRec *gr = timerdata->me->_gtf.findp(timerdata->mcast);
+	if( gr and gr->gt and ((gr->gt->expiry() - Timestamp::now()) > 2) )
+		gr->gt->schedule_after_msec(timerdata->me->_qrv*1000); //LMQT, need variables...
+	Packet* q = generateGroupSpecificQuery(timerdata->mcast);
+	output(1).push(q);
+	delete timerdata;
+}
+
 //generates general queries
 void IGMPq::run_timer(Timer* t){
 	igmpv3_query data;
 	data.type = IGMP_QUERY;
-	data.mrc = 100;
+	data.mrc = 50; //default is 100 <- will need a variable for this...
 	data.sum = 0;
 	data.mcaddr = 0;
 	data.resv = 0;
@@ -232,7 +370,7 @@ Packet* IGMPq::generateGroupSpecificQuery(const IPAddress& ip)
 {
 	igmpv3_query data;
 	data.type = IGMP_QUERY;
-	data.mrc = 50;
+	data.mrc = 10; //default LMQI
 	data.sum = 0;
 	data.mcaddr = ip.addr();
 	data.resv = 0;

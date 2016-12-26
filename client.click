@@ -30,9 +30,6 @@ elementclass Client {
 		-> SetIPChecksum
 		-> EtherEncap(0x0800, $address, multicast_report)
 		-> frag2 :: IPFragmenter(1500)
-		-> Queue(10000) //should never get full because packets are not generated at such a fast rate...
-		-> DelayUnqueue(0.00001) //delaying the packets just a tad to make sure the 'dumped' order is correct
-		//probably wont need this delay when the delay timers are implemented according to 'Max Resp Code'
 		-> output;
 
 	igmp[2]

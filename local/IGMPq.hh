@@ -11,11 +11,11 @@ CLICK_DECLS
 
 struct SrcRecRouter {
 	IPAddress src; //source address
-	//Timer st; //source timer
+	Timer* st; //source timer
 };
 
 struct GrpRec {
-	//Timer gt; //group timer
+	Timer* gt; //group timer
 	bool inc; //filter mode, true if mode is include, false if mode is exclude
 	Vector<SrcRecRouter> srcrecs; //source records
 };
@@ -51,6 +51,31 @@ class IGMPq : public Element {
 		HashMap<IPAddress, GrpRec> _gtf; //vector of 'groups to forward'
 
 		Packet* generateGroupSpecificQuery(const IPAddress& ip);
+
+		struct GSDelayData { //Group-Specific delay to correct "dumping" order
+			IGMPq* me;
+			IPAddress mcast;
+		};
+		static void handleGSDelay(Timer*, void *);
+		void GSDelay(GSDelayData *);
+
+		void setGroupTimer(GrpRec &rec, const IPAddress &mcast);
+		struct gTimerData { //group timer data
+			IGMPq* me;
+			IPAddress group;
+		};
+		static void gHandleExpiry(Timer*, void *);
+		void GroupExpire(gTimerData *);
+
+
+		void setSourceTimer(SrcRecRouter &rec, const IPAddress &mcast);
+		struct sTimerData { //source timer data
+			IGMPq* me;
+			IPAddress group;
+			IPAddress src;
+		};
+		static void sHandleExpiry(Timer*, void *);
+		void SourceExpire(sTimerData *);
 };
 
 CLICK_ENDDECLS

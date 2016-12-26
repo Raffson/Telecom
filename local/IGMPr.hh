@@ -3,6 +3,9 @@
 #include <click/element.hh>
 #include <clicknet/ip.h>
 #include <click/hashmap.hh>
+#include <click/timer.hh>
+#include <stdlib.h>
+#include <time.h>
 #include "igmpv3.hh"
 
 CLICK_DECLS
@@ -10,6 +13,7 @@ CLICK_DECLS
 struct SrcRec {
 	bool inc; //true if mode is include
 	Vector<IPAddress> srcs; //list of sources that are either included or excluded
+	Timer* gTimer; //group timer
 };
 
 class IGMPr : public Element { 
@@ -31,8 +35,21 @@ class IGMPr : public Element {
 		static String getgroups(Element *e, void * thunk);
 		void add_handlers();
 	private:
-		//Vector<IPAddress> mcg; //multicast groups
 		HashMap<IPAddress, SrcRec> mcg; //multicast groups
+
+		Timer iTimer; //interface timer
+		struct iTimerData { //interface timer data
+			IGMPr* me;
+		};
+		static void iHandleExpiry(Timer*, void *);
+		void GQueryResponse(iTimerData *);
+
+		struct gTimerData { //group timer data
+			IGMPr* me;
+			IPAddress group;
+		};
+		static void gHandleExpiry(Timer*, void *);
+		void SQueryResponse(gTimerData *);
 		
 };
 
