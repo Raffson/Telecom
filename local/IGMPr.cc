@@ -3,9 +3,8 @@
 #include <click/error.hh>
 #include "IGMPr.hh"
 
-//WTF
 CLICK_DECLS
-IGMPr::IGMPr()
+IGMPr::IGMPr() : silent(false)
 {}
 
 IGMPr::~ IGMPr()
@@ -14,11 +13,12 @@ IGMPr::~ IGMPr()
 
 int IGMPr::configure(Vector<String> &conf, ErrorHandler *errh) {
 	srand(time(NULL));
-	if (cp_va_kparse(conf, this, errh, cpEnd) < 0) return -1;
+	bool s = false;
+	if (cp_va_kparse(conf, this, errh, "SILENT", cpkP, cpBool, &s, cpEnd) < 0) return -1;
+	silent = s;
 	return 0;
 }
 
-//STILL NEED TO DELAY REPORTS ACCORDING TO 'MAX RESP CODE'
 void IGMPr::push(int, Packet* p)
 {
 	if( p->packet_type_anno() == 2 and p->ip_header() and p->ip_header()->ip_p == IP_PROTO_IGMP )
@@ -137,7 +137,7 @@ void IGMPr::GQueryResponse(iTimerData * tdata){
 	}
 	uint16_t sum = click_in_cksum(wp->data()+4,rsize+(tdata->me->mcg.size()*grsize)+(sourcecount*sizeof(uint32_t)));
 	memcpy(wp->data()+6, &sum, 2);
-	output(1).push(wp);
+	if( !silent ) output(1).push(wp);
 	delete tdata;
 }
 
@@ -181,7 +181,7 @@ void IGMPr::SQueryResponse(gTimerData * tdata){
 	}
 	uint16_t sum = click_in_cksum(wp->data()+4,rsize+grsize+(sr->srcs.size()*sizeof(uint32_t)));
 	memcpy(wp->data()+6, &sum, 2);
-	output(1).push(wp);
+	if( !silent ) output(1).push(wp);
 	delete tdata;
 }
 
@@ -254,7 +254,7 @@ int IGMPr::join(const String &conf, Element *e, void * thunk, ErrorHandler * err
 		}
 		uint16_t sum = click_in_cksum(p->data()+4, rsize+grsize+(srcs.size()*sizeof(uint32_t)));
 		memcpy(p->data()+6, &sum, 2);
-		me->output(1).push(p);
+		if( !me->silent ) me->output(1).push(p);
 		return 0;
 	}
 	else return -1;
@@ -295,7 +295,7 @@ int IGMPr::leave(const String &conf, Element *e, void * thunk, ErrorHandler * er
 		memcpy(p->data()+4+rsize, &gr, grsize); //group record
 		uint16_t sum = click_in_cksum(p->data()+4, rsize+grsize);
 		memcpy(p->data()+6, &sum, 2);
-		me->output(1).push(p);
+		if( !me->silent ) me->output(1).push(p);
 		return 0;
 	}
 	else return -1;
@@ -368,7 +368,7 @@ int IGMPr::sources(const String &conf, Element *e, void * thunk, ErrorHandler * 
 	uint16_t sum = click_in_cksum(wp->data()+4,
 		rsize+grsize+(sr->srcs.size()*sizeof(uint32_t)));
 	memcpy(wp->data()+6, &sum, 2);
-	me->output(1).push(wp);
+	if( !me->silent ) me->output(1).push(wp);
 	return 0;
 }
 
@@ -425,8 +425,17 @@ int IGMPr::changemode(const String &conf, Element *e, void * thunk, ErrorHandler
 		uint16_t sum = click_in_cksum(wp->data()+4,
 			rsize+grsize+(sr->srcs.size()*sizeof(uint32_t)));
 		memcpy(wp->data()+6, &sum, 2);
-		me->output(1).push(wp);
+		if( !me->silent ) me->output(1).push(wp);
 	}
+	return 0;
+}
+
+int IGMPr::setsilent(const String &conf, Element *e, void * thunk, ErrorHandler * errh)
+{
+	IGMPr * me = (IGMPr *) e;
+	bool s = true;
+	if(cp_va_kparse(conf, me, errh, "SILENT", cpkP, cpBool, &s, cpEnd) < 0) return -1;
+	me->silent = s;
 	return 0;
 }
 
@@ -449,12 +458,25 @@ String IGMPr::getgroups(Element *e, void * thunk)
 	return groups;
 }
 
+
+String IGMPr::getsilent(Element *e, void * thunk)
+{
+	IGMPr * me = (IGMPr *) e;
+	String s;
+	s += "Silent mode is ";
+	if( me->silent ) s+= "on.\n";
+	else s+= "off.\n";
+	return s;
+}
+
 void IGMPr::add_handlers()
 {
 	add_write_handler("join", &join, (void *)0);
 	add_write_handler("leave", &leave, (void *)0);
 	add_write_handler("sources", &sources, (void *)0);
 	add_write_handler("mode", &changemode, (void *)0);
+	add_write_handler("silent", &setsilent, (void *)0);
+	add_read_handler("silent", &getsilent, (void *)0);
 	add_read_handler("getgroups", &getgroups, (void *)0);
 }
 

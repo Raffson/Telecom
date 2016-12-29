@@ -29,7 +29,7 @@ elementclass Router {
 
 	//192.168.2.0/24 network
 	tigmp[1]
-		-> i1 :: IGMPq($client1_address, QQIC 10)
+		-> i1 :: IGMPq($client1_address, QQIC 10, MRC 50)
 		-> EtherEncap(0x0800, $client1_address, multicast_client_address)
 		-> [1]output;
 

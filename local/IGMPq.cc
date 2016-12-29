@@ -5,7 +5,7 @@
 
 
 CLICK_DECLS
-IGMPq::IGMPq() : _t(this), _qqic(125), _qrv(IGMP_DEFQRV), _startup(IGMP_DEFQRV), _mask(ntohl(0xFFFFFF00))
+IGMPq::IGMPq() : _t(this), _qqic(125), _qrv(IGMP_DEFQRV), _startup(IGMP_DEFQRV), _mask(htonl(0xFFFFFF00)), _mrc(100), _lmqi(10)
 {}
 
 IGMPq::~ IGMPq()
@@ -24,7 +24,7 @@ unsigned int getQQI(unsigned int qqi)
 int IGMPq::configure(Vector<String> &conf, ErrorHandler *errh) {
 	_t.initialize(this);
 
-	if (cp_va_kparse(conf, this, errh, "IP", cpkP+cpkM, cpIPAddress, &_addr, "QQIC", cpkP, cpByte, &_qqic, "QRV", cpkP, cpByte, &_qrv, "MASK", cpkP, cpIPAddress, &_mask, cpEnd) < 0) return -1;
+	if (cp_va_kparse(conf, this, errh, "IP", cpkP+cpkM, cpIPAddress, &_addr, "QQIC", cpkP, cpByte, &_qqic, "QRV", cpkP, cpByte, &_qrv, "MASK", cpkP, cpIPAddress, &_mask, "MRC", cpkP, cpByte, &_mrc, "LMQI", cpkP, cpByte, &_lmqi, cpEnd) < 0) return -1;
 	unsigned int qqi = getQQI(_qqic);
 	if( _qrv > 7 ) {
 		_qrv = 0;
@@ -35,24 +35,22 @@ int IGMPq::configure(Vector<String> &conf, ErrorHandler *errh) {
 		_t.schedule_after_msec(qqi*250); //startup query interval, 1/4 of the QQIC as stated in 8.6
 		_startup = _qrv;
 	}
+	unsigned int mrt = getQQI(_mrc);
+	if( mrt >= qqi*10 ) _mrc = _qqic; //if max response time exceeds the limit, set it to _qqic
+	unsigned int lmqi = getQQI(_lmqi);
+	if( lmqi >= qqi*10 ) _lmqi = _qqic; //if LMQI exceeds the limit, set it to _qqic
 	return 0;
 }
 
-static unsigned int grouptimercount = 0;
-
 void IGMPq::setGroupTimer(GrpRec &rec, const IPAddress &mcast)
 {
-	//WTF?
 	gTimerData* timerdata = new gTimerData();
 	timerdata->me = this;
 	timerdata->group = mcast;
 	rec.gt = new Timer(&IGMPq::gHandleExpiry,timerdata);
 	rec.gt->initialize(this);
-	rec.gt->schedule_after_msec(_qrv*getQQI(_qqic)*1000+5000);
-	click_chatter("Timer created for group %s, total=%d", mcast.unparse().c_str(), ++grouptimercount);
+	rec.gt->schedule_after_msec(_qrv*getQQI(_qqic)*1000+(getQQI(_mrc)*100));
 }
-
-static unsigned int sourcetimercount = 0;
 
 void IGMPq::setSourceTimer(SrcRecRouter &rec, const IPAddress &mcast)
 {
@@ -62,8 +60,7 @@ void IGMPq::setSourceTimer(SrcRecRouter &rec, const IPAddress &mcast)
 	timerdata->src = rec.src;
 	rec.st = new Timer(&IGMPq::sHandleExpiry,timerdata);
 	rec.st->initialize(this);
-	rec.st->schedule_after_msec(_qrv*getQQI(_qqic)*1000+5000);
-	click_chatter("Timer created for source %s in group %s, total=%d", rec.src.unparse().c_str(), mcast.unparse().c_str(), ++sourcetimercount);
+	rec.st->schedule_after_msec(_qrv*getQQI(_qqic)*1000+(getQQI(_mrc)*100));
 }
 
 Vector<SrcRecRouter> DiffSet(const Vector<SrcRecRouter> &a, const Vector<SrcRecRouter> &b)
@@ -101,17 +98,17 @@ void IGMPq::push(int, Packet* p)
 			
 			IPAddress mcast((*(uint32_t*)(p->data()+36+offset)));
 			uint16_t nos = ntohs((*(uint16_t*)(p->data()+34+offset)));
+			Vector<SrcRecRouter> repsrc;
+			for( unsigned int i=0; i < nos; i++ ) {
+				SrcRecRouter srec;
+				srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4+offset)));
+				srec.st = NULL;
+				repsrc.push_back(srec);
+			}
 			if( (*(p->data()+32+offset)) == 0x04 or (*(p->data()+32+offset)) == 0x02 ) {
 			//mode is exclude or change to exclude
 				GrpRec *gr = _gtf.findp(mcast);
 				if( gr ) { //group is present...
-					Vector<SrcRecRouter> repsrc;
-					for( unsigned int i=0; i < nos; i++ ) {
-						SrcRecRouter srec;
-						srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4+offset)));
-						srec.st = NULL;
-						repsrc.push_back(srec);
-					}
 					if( gr->inc ) { //changing from include to exclude
 						gr->inc = false; //because at least 1 host is in exclude mode
 						Vector<SrcRecRouter> diff = DiffSet(repsrc, gr->srcrecs);
@@ -147,7 +144,7 @@ void IGMPq::push(int, Packet* p)
 							for( unsigned int j=0; j < diff2.size(); j++ ) {
 								if( gr->srcrecs[i].src == diff2[j].src ) {
 									if( gr->srcrecs[i].st ) {
-										gr->srcrecs[i].st->schedule_after_msec(_qrv*getQQI(_qqic)*1000+5000);
+										gr->srcrecs[i].st->schedule_after_msec(_qrv*getQQI(_qqic)*1000+(getQQI(_mrc)*100));
 									} else {
 										setSourceTimer(gr->srcrecs[i], mcast);
 									}
@@ -166,7 +163,7 @@ void IGMPq::push(int, Packet* p)
 								}
 							}
 						}
-						gr->gt->schedule_after_msec(_qrv*getQQI(_qqic)*1000+5000);
+						gr->gt->schedule_after_msec(_qrv*getQQI(_qqic)*1000+(getQQI(_mrc)*100));
 					}
 				} else {
 					GrpRec rec;
@@ -183,16 +180,8 @@ void IGMPq::push(int, Packet* p)
 			}
 			else if( (*(p->data()+32+offset)) == 0x03 or (*(p->data()+32+offset)) == 0x01 ) {
 			//mode is include or change to include
-				Vector<SrcRecRouter> repsrc;
-				for( unsigned int i=0; i < nos; i++ ) {
-					SrcRecRouter srec;
-					srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4+offset)));
-					srec.st = NULL;
-					repsrc.push_back(srec);
-				}
 				GrpRec *gr = _gtf.findp(mcast);
-				if( gr and nos > 0 ) { //group record should always be present...
-					//if( gr->inc ) {
+				if( gr and nos > 0 ) { //group record should always be present... else add it
 					//same stuff needs to be done for both include & exclude mode
 					for( unsigned int i=0; i < repsrc.size(); i++ ) {
 						bool found = false;
@@ -200,7 +189,7 @@ void IGMPq::push(int, Packet* p)
 							if( gr->srcrecs[j].src == repsrc[i].src ) {
 								found = true;
 								if( gr->srcrecs[j].st ) {
-									gr->srcrecs[j].st->schedule_after_msec(_qrv*getQQI(_qqic)*1000+5000);
+									gr->srcrecs[j].st->schedule_after_msec(_qrv*getQQI(_qqic)*1000+(_mrc*100));
 								} else {
 									setSourceTimer(gr->srcrecs[j], mcast);
 								}
@@ -268,12 +257,10 @@ void IGMPq::gHandleExpiry(Timer* t, void * data){
 	assert(timerdata); // the cast must be good
 	timerdata->me->GroupExpire(timerdata);
 	delete t;
-	grouptimercount--;
 }
 
 void IGMPq::GroupExpire(gTimerData * tdata){
 	GrpRec *gr = tdata->me->_gtf.findp(tdata->group);
-	click_chatter("GroupExpire group: %s", tdata->group.unparse().c_str());
 	if( gr ) {
 		gr->inc = true;
 		gr->gt = NULL; //mem is freed in gHandleExpiry
@@ -283,7 +270,6 @@ void IGMPq::GroupExpire(gTimerData * tdata){
 				i--;
 			}
 		}
-		click_chatter("GroupExpire srcrecs left: %d", gr->srcrecs.size());
 		if( gr->srcrecs.size() == 0 ) tdata->me->_gtf.erase(tdata->group);
 	}
 	delete tdata;
@@ -294,13 +280,10 @@ void IGMPq::sHandleExpiry(Timer* t, void * data){
 	assert(timerdata); // the cast must be good
 	timerdata->me->SourceExpire(timerdata);
 	delete t;
-	sourcetimercount--;
 }
 
 void IGMPq::SourceExpire(sTimerData * tdata){
 	GrpRec *gr = tdata->me->_gtf.findp(tdata->group);
-	click_chatter("SourceExpire group: %s   src: %s",
-		tdata->group.unparse().c_str(), tdata->src.unparse().c_str());
 	if( gr ) {
 		if( gr->inc ) {
 			//Suggest to stop forwarding traffic from source and remove source record.
@@ -317,8 +300,6 @@ void IGMPq::SourceExpire(sTimerData * tdata){
 			}
 		} else {
 			//Suggest to not forward traffic from source (DO NOT remove record)
-			//so basically nothing but just need to make sure this doesn't get forwarded?
-			//like deleting timer pointer & setting it to NULL?
 			for( unsigned int j=0; j < gr->srcrecs.size(); j++ ) {
 				if( gr->srcrecs[j].src == tdata->src ) {
 					gr->srcrecs[j].st = NULL; //mem is freed in sHandleExpiry
@@ -342,7 +323,7 @@ void IGMPq::GSDelay(GSDelayData * timerdata){
 	//timerdata->me->_gtf.erase(timerdata->mcast); //temporarily to stop forwarding, need expiration timers
 	GrpRec *gr = timerdata->me->_gtf.findp(timerdata->mcast);
 	if( gr and gr->gt and ((gr->gt->expiry() - Timestamp::now()) > 2) )
-		gr->gt->schedule_after_msec(timerdata->me->_qrv*1000); //LMQT, need variables...
+		gr->gt->schedule_after_msec(timerdata->me->_qrv*getQQI(timerdata->me->_lmqi)*100); //LMQT
 	Packet* q = generateGroupSpecificQuery(timerdata->mcast);
 	output(1).push(q);
 	delete timerdata;
@@ -352,7 +333,7 @@ void IGMPq::GSDelay(GSDelayData * timerdata){
 void IGMPq::run_timer(Timer* t){
 	igmpv3_query data;
 	data.type = IGMP_QUERY;
-	data.mrc = 50; //default is 100 <- will need a variable for this...
+	data.mrc = _mrc;
 	data.sum = 0;
 	data.mcaddr = 0;
 	data.resv = 0;
@@ -372,13 +353,7 @@ void IGMPq::run_timer(Timer* t){
 	memcpy(p->data()+4, &data, sizeof(igmpv3_query)); //IGMP data
 	p->set_packet_type_anno(Packet::MULTICAST);
 
-	//still need to account for qqic > 128, do the math to get QQI
-	unsigned int qqi = _qqic;
-	if( qqi >= 128 ) {
-		uint8_t mant = 255 & 0x0F;
-		uint8_t exp = (255 & 0x70) >> 4;
-		qqi = (mant | 0x10) << (exp+3);
-	} 
+	unsigned int qqi = getQQI(_qqic);
 	if( _startup > 1 ) { //as stated in 8.7 RFC3376
 		_t.schedule_after_msec(qqi*250);
 		_startup--;
@@ -391,7 +366,7 @@ Packet* IGMPq::generateGroupSpecificQuery(const IPAddress& ip)
 {
 	igmpv3_query data;
 	data.type = IGMP_QUERY;
-	data.mrc = 10; //default LMQI
+	data.mrc = _lmqi;
 	data.sum = 0;
 	data.mcaddr = ip.addr();
 	data.resv = 0;
@@ -421,7 +396,11 @@ int IGMPq::setqqic(const String &conf, Element *e, void * thunk, ErrorHandler * 
 	if(cp_va_kparse(conf, me, errh, "QQIC", cpkP, cpUnsigned, &qqic, cpEnd) < 0) return -1;
 	if( qqic > 255 ) me->_qqic = 255; //QQIC is 1 byte (unsigned), so top off at 255
 	else me->_qqic = qqic;
-	//should check mrc if we will use it, otherwise set mrc equal to qqic because RFC states QQIC >= MRC
+	unsigned int qqi = getQQI(me->_qqic);
+	unsigned int mrt = getQQI(me->_mrc);
+	if( mrt >= qqi*10 ) me->_mrc = me->_qqic; //if max response time exceeds the limit, set it to _qqic
+	unsigned int lmqii = getQQI(me->_lmqi);
+	if( lmqii >= qqi*10 ) me->_lmqi = me->_qqic; //if LMQI exceeds the limit, set it to _qqic
 	return 0;
 }
 
@@ -433,6 +412,34 @@ int IGMPq::setqrv(const String &conf, Element *e, void * thunk, ErrorHandler * e
 	if(cp_va_kparse(conf, me, errh, "QRV", cpkP, cpUnsigned, &qrv, cpEnd) < 0) return -1;
 	if( qrv > 7 ) me->_qrv = 0;
 	else me->_qrv = qrv;
+	return 0;
+}
+
+//If no parameter is specified, we use the default value of 100 or less than QQIC
+int IGMPq::setmrc(const String &conf, Element *e, void * thunk, ErrorHandler * errh)
+{
+	IGMPq * me = (IGMPq *) e;
+	uint32_t mrc = 100;
+	if(cp_va_kparse(conf, me, errh, "MRC", cpkP, cpUnsigned, &mrc, cpEnd) < 0) return -1;
+	if( mrc > 255 ) me->_mrc = 255; //MRC is 1 byte (unsigned), so top off at 255
+	else me->_mrc = mrc;
+	unsigned int qqi = getQQI(me->_qqic);
+	unsigned int mrt = getQQI(me->_mrc);
+	if( mrt >= qqi*10 ) me->_mrc = me->_qqic; //if max response time exceeds the limit, set it to _qqic
+	return 0;
+}
+
+//If no parameter is specified, we use the default value of 10 or less than QQIC
+int IGMPq::setlmqi(const String &conf, Element *e, void * thunk, ErrorHandler * errh)
+{
+	IGMPq * me = (IGMPq *) e;
+	uint32_t lmqi = 100;
+	if(cp_va_kparse(conf, me, errh, "LMQI", cpkP, cpUnsigned, &lmqi, cpEnd) < 0) return -1;
+	if( lmqi > 255 ) me->_lmqi = 255; //LMQI has to fit in MRC so is 1 byte (unsigned), top off at 255
+	else me->_lmqi = lmqi;
+	unsigned int qqi = getQQI(me->_qqic);
+	unsigned int lmqii = getQQI(me->_lmqi);
+	if( lmqii >= qqi*10 ) me->_lmqi = me->_qqic; //if LMQI exceeds the limit, set it to _qqic
 	return 0;
 }
 
@@ -452,12 +459,60 @@ String IGMPq::getqrv(Element *e, void * thunk)
 	return qrv;
 }
 
+String IGMPq::getmrc(Element *e, void * thunk)
+{
+	IGMPq *me = (IGMPq *) e;
+	String mrc((int)(me->_mrc));
+	mrc += "\n";
+	return mrc;
+}
+
+String IGMPq::getlmqi(Element *e, void * thunk)
+{
+	IGMPq *me = (IGMPq *) e;
+	String lmqi((int)(me->_lmqi));
+	lmqi += "\n";
+	return lmqi;
+}
+
+String IGMPq::getinfo(Element *e, void * thunk)
+{
+	IGMPq *me = (IGMPq *) e;
+	String info;
+	IPAddress subnet(me->_addr.addr() & me->_mask.addr());
+	info += "\nIGMP State for " + subnet.unparse() + "/24 network :\n\n";
+	for( HashMap<IPAddress, GrpRec>::iterator it = me->_gtf.begin(); it != me->_gtf.end(); ++it ) {
+		info += "Group timer for " + it.key().unparse();
+		if( it.value().gt ) {
+			info += " is scheduled in " + (it.value().gt->expiry() - Timestamp::now()).unparse();
+			info += " seconds ";
+		} else info += " has expired ";
+		if( it.value().inc ) info += "(include mode).\n";
+		else info += "(exlude mode).\n";
+		for( unsigned int i=0; i < it.value().srcrecs.size(); i++ ) {
+			info += "\tSource timer for " + it.value().srcrecs[i].src.unparse();
+			if( it.value().srcrecs[i].st ) {
+				info += " is scheduled in ";
+				info += (it.value().srcrecs[i].st->expiry() - Timestamp::now()).unparse();
+				info += " seconds.\n";
+			} else info += " has expired.\n";
+		}
+	}
+	info += "\n";
+	return info;
+}
+
 void IGMPq::add_handlers()
 {
 	add_write_handler("qqic", &setqqic, (void *)0);
 	add_write_handler("qrv", &setqrv, (void *)0);
+	add_write_handler("mrc", &setmrc, (void *)0);
+	add_write_handler("lmqi", &setlmqi, (void *)0);
 	add_read_handler("qqic", &getqqic, (void *)0);
 	add_read_handler("qrv", &getqrv, (void *)0);
+	add_read_handler("mrc", &getmrc, (void *)0);
+	add_read_handler("lmqi", &getlmqi, (void *)0);
+	add_read_handler("info", &getinfo, (void *)0);
 }
 
 CLICK_ENDDECLS

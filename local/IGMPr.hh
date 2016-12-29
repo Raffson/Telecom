@@ -32,10 +32,13 @@ class IGMPr : public Element {
 		static int leave(const String &conf, Element *e, void * thunk, ErrorHandler * errh);
 		static int sources(const String &conf, Element *e, void * thunk, ErrorHandler * errh);
 		static int changemode(const String &conf, Element *e, void * thunk, ErrorHandler * errh);
+		static int setsilent(const String &conf, Element *e, void * thunk, ErrorHandler * errh);
+		static String getsilent(Element *e, void * thunk);
 		static String getgroups(Element *e, void * thunk);
 		void add_handlers();
 	private:
 		HashMap<IPAddress, SrcRec> mcg; //multicast groups
+		bool silent;
 
 		Timer iTimer; //interface timer
 		struct iTimerData { //interface timer data
