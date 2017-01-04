@@ -88,7 +88,7 @@ void IGMPq::push(int, Packet* p)
 	//upon receiving join reports, we must start forwarding -> done
 	//we should be dealing only with IGMP or multicast IP packets
 	if( p->packet_type_anno() == 2 and p->ip_header() and p->ip_header()->ip_p == IP_PROTO_IGMP ) {
-		//IGMP join or leave
+		//IGMP
 		uint32_t subnet = _addr.addr() & _mask.addr();
 		if( (p->ip_header()->ip_src.s_addr & _mask.addr()) == subnet ) {
 			//meaning we're on the same interface
@@ -113,16 +113,10 @@ void IGMPq::push(int, Packet* p)
 						gr->inc = false; //because at least 1 host is in exclude mode
 						Vector<SrcRecRouter> diff = DiffSet(repsrc, gr->srcrecs);
 						Vector<SrcRecRouter> diff2 = DiffSet(gr->srcrecs, repsrc);
+						for( unsigned int i=0; i < diff.size(); i++ ) {
+							gr->srcrecs.push_back(diff[i]);
+						}
 						for( unsigned int i=0; i < gr->srcrecs.size(); i++ ) {
-							for( unsigned int j=0; j < diff.size(); j++ ) {
-								if( gr->srcrecs[i].src == diff[j].src and
-										gr->srcrecs[i].st ) {
-									gr->srcrecs[i].st->clear();
-									delete gr->srcrecs[i].st;
-									gr->srcrecs[i].st = NULL;
-									break;
-								}
-							}
 							for( unsigned int j=0; j < diff2.size(); j++ ) {
 								if( gr->srcrecs[i].src == diff2[j].src ) {
 									if( gr->srcrecs[i].st ) {
@@ -140,6 +134,9 @@ void IGMPq::push(int, Packet* p)
 					} else { //mode is already exclude
 						Vector<SrcRecRouter> diff = DiffSet(gr->srcrecs, repsrc);
 						Vector<SrcRecRouter> diff2 = DiffSet(repsrc, gr->srcrecs);
+						for( unsigned int i=0; i < diff2.size(); i++ ) {
+							gr->srcrecs.push_back(diff2[i]);
+						}
 						for( unsigned int i=0; i < gr->srcrecs.size(); i++ ) {
 							for( unsigned int j=0; j < diff2.size(); j++ ) {
 								if( gr->srcrecs[i].src == diff2[j].src ) {
@@ -168,12 +165,7 @@ void IGMPq::push(int, Packet* p)
 				} else {
 					GrpRec rec;
 					rec.inc = false;
-					for( unsigned int i=0; i < nos; i++ ) {
-						SrcRecRouter srec;
-						srec.src = IPAddress((*(uint32_t*)(p->data()+40+i*4+offset)));
-						srec.st = NULL;
-						rec.srcrecs.push_back(srec);
-					}
+					rec.srcrecs = repsrc;
 					setGroupTimer(rec, mcast);
 					_gtf.insert(mcast, rec);
 				}
@@ -322,8 +314,15 @@ void IGMPq::handleGSDelay(Timer* t, void * data){
 void IGMPq::GSDelay(GSDelayData * timerdata){
 	//timerdata->me->_gtf.erase(timerdata->mcast); //temporarily to stop forwarding, need expiration timers
 	GrpRec *gr = timerdata->me->_gtf.findp(timerdata->mcast);
-	if( gr and gr->gt and ((gr->gt->expiry() - Timestamp::now()) > 2) )
-		gr->gt->schedule_after_msec(timerdata->me->_qrv*getQQI(timerdata->me->_lmqi)*100); //LMQT
+	if( gr and gr->gt ) {
+		unsigned int lmqt = timerdata->me->_qrv*getQQI(timerdata->me->_lmqi)*100;
+		if( (gr->gt->expiry() - Timestamp::now())*1000 > lmqt )
+			gr->gt->schedule_after_msec(lmqt);
+		for( unsigned int i=0; i < gr->srcrecs.size(); i++ ) {
+			if( gr->srcrecs[i].st and (gr->srcrecs[i].st->expiry() - Timestamp::now())*1000 > lmqt)
+				gr->srcrecs[i].st->schedule_after_msec(lmqt);
+		}
+	}
 	Packet* q = generateGroupSpecificQuery(timerdata->mcast);
 	output(1).push(q);
 	delete timerdata;
