@@ -477,7 +477,7 @@ void IGMPr::add_handlers()
 	add_write_handler("mode", &changemode, (void *)0);
 	add_write_handler("silent", &setsilent, (void *)0);
 	add_read_handler("silent", &getsilent, (void *)0);
-	add_read_handler("getgroups", &getgroups, (void *)0);
+	add_read_handler("groups", &getgroups, (void *)0);
 }
 
 CLICK_ENDDECLS

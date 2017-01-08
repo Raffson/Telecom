@@ -24,7 +24,8 @@ unsigned int getQQI(unsigned int qqi)
 int IGMPq::configure(Vector<String> &conf, ErrorHandler *errh) {
 	_t.initialize(this);
 
-	if (cp_va_kparse(conf, this, errh, "IP", cpkP+cpkM, cpIPAddress, &_addr, "QQIC", cpkP, cpByte, &_qqic, "QRV", cpkP, cpByte, &_qrv, "MASK", cpkP, cpIPAddress, &_mask, "MRC", cpkP, cpByte, &_mrc, "LMQI", cpkP, cpByte, &_lmqi, cpEnd) < 0) return -1;
+	if (cp_va_kparse(conf, this, errh, "IP", cpkP+cpkM, cpIPAddress, &_addr, "QQIC", cpkP, cpByte, &_qqic, "QRV", cpkP, cpByte, &_qrv, "MRC", cpkP, cpByte, &_mrc, "LMQI", cpkP, cpByte, &_lmqi, "MASK", cpkP, cpIPAddress, &_mask, cpEnd) < 0) return -1;
+	if( _qqic <= 0 ) _qqic = 1;
 	unsigned int qqi = getQQI(_qqic);
 	if( _qrv > 7 ) {
 		_qrv = 0;
@@ -393,6 +394,7 @@ int IGMPq::setqqic(const String &conf, Element *e, void * thunk, ErrorHandler * 
 	IGMPq * me = (IGMPq *) e;
 	uint32_t qqic = 125;
 	if(cp_va_kparse(conf, me, errh, "QQIC", cpkP, cpUnsigned, &qqic, cpEnd) < 0) return -1;
+	if( qqic <= 0 ) qqic = 1;
 	if( qqic > 255 ) me->_qqic = 255; //QQIC is 1 byte (unsigned), so top off at 255
 	else me->_qqic = qqic;
 	unsigned int qqi = getQQI(me->_qqic);
